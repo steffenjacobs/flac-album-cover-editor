@@ -1,0 +1,5 @@
+fastapi>=0.110
+uvicorn>=0.29
+mutagen>=1.47
+Pillow>=10.0
+requests>=2.31

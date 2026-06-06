@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FLAC Album Cover Editor</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <header>
+    <h1>🎵 FLAC Album Cover Editor</h1>
+    <div class="controls">
+      <label class="field grow">
+        <span>Music folder</span>
+        <input id="musicRoot" type="text" spellcheck="false" />
+      </label>
+      <label class="field">
+        <span>Min size (px)</span>
+        <input id="minSize" type="number" min="100" step="50" value="800" />
+      </label>
+      <label class="checkbox" title="Copy each .flac to <name>.flac.bak before patching">
+        <input id="backup" type="checkbox" checked />
+        <span>Backup (.bak)</span>
+      </label>
+      <button id="scanBtn" class="primary">Scan library</button>
+    </div>
+    <div id="status" class="status"></div>
+    <div id="progress" class="progress hidden"><div id="progressBar"></div></div>
+  </header>
+
+  <main id="results"></main>
+
+  <template id="albumTpl">
+    <section class="album">
+      <div class="album-head">
+        <div class="thumb"><img class="current" alt="" /><div class="noart">no cover</div></div>
+        <div class="album-meta">
+          <div class="album-title"></div>
+          <div class="album-artist"></div>
+          <div class="album-folder"></div>
+          <div class="badges"></div>
+        </div>
+        <div class="album-actions">
+          <button class="find">Find covers</button>
+          <button class="patch" disabled>Patch metadata</button>
+        </div>
+      </div>
+      <div class="files hidden"></div>
+      <div class="candidates"></div>
+      <div class="result hidden"></div>
+    </section>
+  </template>
+
+  <script src="/app.js"></script>
+</body>
+</html>

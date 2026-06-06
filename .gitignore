@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Virtual environment
+.venv/
+venv/
+
+# FLAC backups created by the patcher
+*.bak
+*.flacbak
+
+# OS / editor cruft
+Thumbs.db
+.DS_Store
+.idea/
+.vscode/
