@@ -17,7 +17,7 @@ from io import BytesIO
 from pathlib import Path
 
 import requests
-from fastapi import Body, FastAPI, HTTPException
+from fastapi import Body, FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
@@ -249,6 +249,43 @@ def candidate_image(token: str):
     if not c:
         raise HTTPException(404, "candidate expired")
     return Response(content=c["data"], media_type=c["mime"])
+
+
+MAX_UPLOAD_BYTES = 30 * 1024 * 1024
+
+
+@app.post("/api/upload")
+async def upload_cover(file: UploadFile = File(...)):
+    """Accept a user-supplied image, validate it, and stash it in the candidate
+    cache so it can be selected and patched like any fetched candidate."""
+    data = await file.read()
+    if not data:
+        raise HTTPException(400, "Empty file")
+    if len(data) > MAX_UPLOAD_BYTES:
+        raise HTTPException(400, "Image too large (max 30 MB)")
+    try:
+        im = Image.open(BytesIO(data))
+        w, h = im.size
+    except Exception:
+        raise HTTPException(400, "That file is not a readable image")
+
+    token = uuid.uuid4().hex
+    CACHE[token] = {
+        "data": data,
+        "mime": file.content_type or "image/jpeg",
+        "w": w,
+        "h": h,
+    }
+    return {
+        "token": token,
+        "source": "Upload",
+        "title": file.filename,
+        "artist": None,
+        "width": w,
+        "height": h,
+        "url": f"/api/candidate/{token}",
+        "meets": (w >= CONFIG["min_size"] and h >= CONFIG["min_size"]),
+    }
 
 
 # ---------------------------------------------------------------- patch

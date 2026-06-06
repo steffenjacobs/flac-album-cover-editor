@@ -155,6 +155,8 @@ function renderAlbum(album) {
   // actions
   const findBtn = $(".find", node);
   const customBtn = $(".custom", node);
+  const uploadBtn = $(".upload", node);
+  const uploadInput = $(".upload-input", node);
   const patchBtn = $(".patch", node);
   const candEl = $(".candidates", node);
   const resultEl = $(".result", node);
@@ -181,6 +183,7 @@ function renderAlbum(album) {
       patchBtn.disabled = false;
     };
     candEl.appendChild(card);
+    return card;
   }
 
   function updateMoreButton(hasMore) {
@@ -266,6 +269,33 @@ function renderAlbum(album) {
   customInput.addEventListener("keydown", (e) => {
     if (e.key === "Enter") { e.preventDefault(); runCustom(); }
   });
+
+  // upload your own cover image
+  uploadBtn.onclick = () => uploadInput.click();
+  uploadInput.onchange = async () => {
+    const f = uploadInput.files[0];
+    if (!f) return;
+    uploadBtn.disabled = true;
+    const original = uploadBtn.textContent;
+    uploadBtn.textContent = "Uploading…";
+    try {
+      const fd = new FormData();
+      fd.append("file", f);
+      const c = await api("/api/upload", { method: "POST", body: fd });
+      candEl.querySelectorAll(".spinner").forEach((x) => x.remove());
+      const card = addCandidateCard(c);
+      card.click(); // auto-select the uploaded image
+      card.scrollIntoView({ block: "nearest" });
+    } catch (e) {
+      resultEl.classList.remove("hidden", "success");
+      resultEl.classList.add("fail");
+      resultEl.textContent = "Upload failed: " + e.message;
+    } finally {
+      uploadBtn.disabled = false;
+      uploadBtn.textContent = original;
+      uploadInput.value = ""; // allow re-selecting the same file
+    }
+  };
 
   patchBtn.onclick = async () => {
     if (!selectedToken) return;

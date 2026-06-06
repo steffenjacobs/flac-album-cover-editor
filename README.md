@@ -5,9 +5,10 @@ than 800×800**, and patch a high-quality cover into them — picked from candid
 fetched from free album-art APIs (iTunes, Deezer, Cover Art Archive).
 
 It scans a folder tree (works directly on an SMB share like
-`\\192.168.1.147\Music\Music HQ`), groups the problem files **by folder**, shows
-~5–12 candidate covers per folder, and on "Patch metadata" embeds the chosen
-image as a JPEG front cover into **every track in that folder**.
+`\\192.168.1.147\Music\Music HQ`), groups the problem files **by folder**, and
+lets you give each folder a cover — from the album-art APIs, a custom search
+term, or an image you upload yourself — which it embeds as a JPEG front cover
+into **every track in that folder**.
 
 ## Why it's a "local web app" (not just a web page)
 
@@ -16,25 +17,7 @@ this is a small **Python backend** (FastAPI) that does all the file/FLAC/image
 work and also serves the UI on `http://127.0.0.1:8765`. Your browser is just the
 front end, talking to the backend on localhost (same origin → no CORS).
 
-> Run it from your own logged-in Windows session so it inherits your access to
-> the SMB share. Don't run it as a Windows service (SMB sessions are per-logon).
-
-## Quick start
-
-Double-click **`start.bat`** (first run creates a venv and installs deps), then
-the UI opens at <http://127.0.0.1:8765>.
-
-Manual:
-
-```powershell
-py -3 -m venv .venv
-.venv\Scripts\python.exe -m pip install -r requirements.txt
-.venv\Scripts\python.exe server.py
-```
-
-Then open <http://127.0.0.1:8765>.
-
-## Run with Docker
+## Quick start (Docker — recommended)
 
 The app runs in a container; the SMB share is mounted into it via a CIFS volume
 declared in `docker-compose.yml` (Docker's Linux engine performs the mount, so a
@@ -68,26 +51,51 @@ on Windows too).
 3. Open <http://127.0.0.1:8765>. The "Music folder" is pre-set to the mounted
    share, so just click **Scan library**.
 
-The UI port is published to `127.0.0.1` only (same local-only posture as the
-native run). To point at a plain local folder instead of SMB, replace the
-`music` volume with a bind mount (`volumes: ["/path/to/music:/music"]`) and set
-`MUSIC_SUBDIR=` empty.
+The UI port is published to `127.0.0.1` only, so it's reachable from your machine
+only. To point at a plain local folder instead of SMB, replace the `music` volume
+with a bind mount (`volumes: ["/path/to/music:/music"]`) and set `MUSIC_SUBDIR=`
+empty.
 
 > `.env` holds credentials and is git-ignored — never commit it.
 
+## Run locally (without Docker)
+
+If you'd rather run it natively (needs Python 3):
+
+- **Easiest:** double-click **`start.bat`**. On first run it creates a virtualenv
+  in `.venv`, installs the dependencies from `requirements.txt`, then starts the
+  server and opens <http://127.0.0.1:8765> in your browser. Later runs just start
+  the server.
+- **Manual equivalent:**
+
+  ```powershell
+  py -3 -m venv .venv
+  .venv\Scripts\python.exe -m pip install -r requirements.txt
+  .venv\Scripts\python.exe server.py
+  ```
+
+The default music folder is `\\192.168.1.147\Music\Music HQ` (editable in the
+UI). Run it from your own logged-in Windows session so it inherits your access to
+the SMB share — don't run it as a Windows service (SMB sessions are per-logon).
+You can override the defaults with the `MUSIC_ROOT`, `MIN_SIZE`, `HOST`, and
+`PORT` environment variables.
+
 ## Using it
 
-1. Set the **Music folder** (defaults to `\\192.168.1.147\Music\Music HQ`) and
-   the **Min size** (default 800 px). Leave **Backup (.bak)** ticked to keep a
-   copy of each file before it's modified.
-2. Click **Scan library**. A progress bar shows files scanned.
-3. Each flagged folder shows its current cover (if any), the problem tracks, and
-   a **Find covers** button.
-4. Click **Find covers**, pick one of the candidate images, then **Patch
-   metadata**. The chosen cover is downscaled to ≤1200×1200 JPEG and embedded
-   into every FLAC in that folder. If none fit, click **Find more covers** to
-   page in additional results from all three sources (deduplicated), or
-   **Search again** to start over.
+1. Click **Scan library** (the music folder and min size are pre-filled; under
+   Docker they come from `.env`). A progress bar shows files scanned. Leave
+   **Backup (.bak)** ticked to keep a copy of each file before it's modified.
+2. Each flagged folder shows its current cover (if any) and the problem tracks.
+   Get a new cover three ways:
+   - **Find covers** — fetches candidates from iTunes / Deezer / Cover Art
+     Archive using the folder's tags. **Find more covers** pages in additional
+     results (deduplicated); **Search again** restarts.
+   - **Custom search** — type any term (e.g. a different album/artist) to search
+     the same services manually.
+   - **Upload image** — pick a cover from your computer via the file chooser.
+3. Click a candidate (or your upload) to select it, then **Patch metadata**. The
+   image is downscaled to ≤1200×1200 JPEG and embedded into **every FLAC in that
+   folder**.
 
 ## How it works (key technical points)
 
@@ -109,7 +117,9 @@ native run). To point at a plain local folder instead of SMB, replace the
 ## Configuration
 
 `config.json` (created on first scan) stores `music_root` and `min_size`. You can
-also change them in the UI; they persist between runs.
+also change them in the UI; they persist between runs. The `MUSIC_ROOT` and
+`MIN_SIZE` environment variables take precedence over `config.json` (this is how
+the Docker setup pins the in-container mount path).
 
 ## Restoring originals
 
