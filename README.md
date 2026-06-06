@@ -58,27 +58,48 @@ empty.
 
 > `.env` holds credentials and is git-ignored — never commit it.
 
-## Run locally (without Docker)
+## Run locally on Windows (without Docker)
 
-If you'd rather run it natively (needs Python 3):
+If you'd rather run it natively:
 
-- **Easiest:** double-click **`start.bat`**. On first run it creates a virtualenv
-  in `.venv`, installs the dependencies from `requirements.txt`, then starts the
-  server and opens <http://127.0.0.1:8765> in your browser. Later runs just start
-  the server.
-- **Manual equivalent:**
+1. **Install Python 3** from <https://www.python.org/downloads/> (tick *"Add
+   python.exe to PATH"* in the installer).
 
-  ```powershell
-  py -3 -m venv .venv
-  .venv\Scripts\python.exe -m pip install -r requirements.txt
-  .venv\Scripts\python.exe server.py
-  ```
+2. **Open PowerShell in the project folder** — in File Explorer, Shift+right-click
+   the `flac-album-cover-editor` folder and choose *"Open PowerShell window here"*
+   (or `cd` into it).
+
+3. **Create a virtual environment** (first time only):
+
+   ```powershell
+   py -3 -m venv .venv
+   ```
+
+4. **Install the dependencies** (first time only):
+
+   ```powershell
+   .venv\Scripts\python.exe -m pip install -r requirements.txt
+   ```
+
+5. **Start the server:**
+
+   ```powershell
+   .venv\Scripts\python.exe server.py
+   ```
+
+6. **Open the UI** at <http://127.0.0.1:8765>.
+
+On later runs you only need steps 5–6.
 
 The default music folder is `\\192.168.1.147\Music\Music HQ` (editable in the
 UI). Run it from your own logged-in Windows session so it inherits your access to
 the SMB share — don't run it as a Windows service (SMB sessions are per-logon).
 You can override the defaults with the `MUSIC_ROOT`, `MIN_SIZE`, `HOST`, and
-`PORT` environment variables.
+`PORT` environment variables, e.g.:
+
+```powershell
+$env:MUSIC_ROOT = "D:\Music"; .venv\Scripts\python.exe server.py
+```
 
 ## Using it
 
@@ -146,7 +167,6 @@ art_sources.py       iTunes / Deezer / Cover Art Archive lookups
 patcher.py           JPEG re-encode + embed cover (mutagen)
 static/              index.html, app.js, style.css  (the UI)
 tests/               self-contained core tests
-start.bat            Windows launcher (venv + run)
 Dockerfile           container image
 docker-compose.yml   one-command run + CIFS share mount
 .env.example         template for SMB settings (copy to .env)
