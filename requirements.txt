@@ -1,6 +1,6 @@
-fastapi>=0.110
-uvicorn>=0.29
-python-multipart>=0.0.9
+fastapi>=0.136,<0.137
+uvicorn>=0.49,<0.50
+python-multipart>=0.0.32
 mutagen>=1.47
-Pillow>=10.0
-requests>=2.31
+Pillow>=12.2.0,<13
+requests>=2.34.2

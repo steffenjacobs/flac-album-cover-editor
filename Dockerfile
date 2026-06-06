@@ -1,4 +1,6 @@
-FROM python:3.12-slim
+# Pin both the Python minor and the Debian codename so base-OS upgrades are
+# deliberate (a bare python:3.x-slim floats the codename).
+FROM python:3.13-slim-trixie
 
 ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
