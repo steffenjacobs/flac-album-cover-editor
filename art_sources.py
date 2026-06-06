@@ -12,18 +12,22 @@ downloads the URLs (through the backend) and probes their real dimensions.
 
 from __future__ import annotations
 
+import logging
+
 import requests
+
+log = logging.getLogger(__name__)
 
 TIMEOUT = 12
 
 
-def _term(query, artist, album):
+def _term(query: str | None, artist: str | None, album: str | None) -> str | None:
     if artist and album:
         return f"{artist} {album}"
     return album or query
 
 
-def itunes(query, artist, album, ua, limit=5, offset=0):
+def itunes(query, artist, album, ua, limit: int = 5, offset: int = 0) -> list[dict]:
     # iTunes has no offset param, so request offset+limit and slice the tail.
     total = min(offset + limit, 200)
     r = requests.get(
@@ -44,7 +48,6 @@ def itunes(query, artist, album, ua, limit=5, offset=0):
         art = it.get("artworkUrl100")
         if not art:
             continue
-        # Upgrade the thumbnail URL to a high-resolution variant.
         hi = art.replace("100x100bb", "1200x1200bb")
         out.append(
             {
@@ -57,7 +60,7 @@ def itunes(query, artist, album, ua, limit=5, offset=0):
     return out
 
 
-def deezer(query, artist, album, ua, limit=5, offset=0):
+def deezer(query, artist, album, ua, limit: int = 5, offset: int = 0) -> list[dict]:
     r = requests.get(
         "https://api.deezer.com/search/album",
         params={"q": _term(query, artist, album), "limit": limit, "index": offset},
@@ -81,7 +84,7 @@ def deezer(query, artist, album, ua, limit=5, offset=0):
     return out
 
 
-def coverart(query, artist, album, ua, limit=5, offset=0):
+def coverart(query, artist, album, ua, limit: int = 5, offset: int = 0) -> list[dict]:
     """MusicBrainz release-group search -> Cover Art Archive front image.
     MusicBrainz requires a descriptive User-Agent and ~1 req/s (fine: this is
     only called on demand, once per album)."""
@@ -119,7 +122,9 @@ def coverart(query, artist, album, ua, limit=5, offset=0):
     return out
 
 
-def gather_candidate_urls(query, artist, album, ua, page=0, per_source=5):
+def gather_candidate_urls(
+    query, artist, album, ua, page: int = 0, per_source: int = 5
+) -> list[dict]:
     """Query all sources for the given page; ignore individual source failures.
     page is 0-based; each source returns `per_source` results at offset
     page*per_source."""
@@ -128,6 +133,6 @@ def gather_candidate_urls(query, artist, album, ua, page=0, per_source=5):
     for fn in (itunes, deezer, coverart):
         try:
             out.extend(fn(query, artist, album, ua, limit=per_source, offset=offset))
-        except Exception:
-            pass
+        except Exception as exc:
+            log.warning("cover source %s failed: %s", fn.__name__, exc)
     return out

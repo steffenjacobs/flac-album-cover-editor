@@ -155,12 +155,15 @@ you're happy, delete the `.bak` files.
 ## Tests
 
 ```powershell
-.venv\Scripts\python.exe tests\test_core.py
+.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+.venv\Scripts\python.exe -m pytest --cov --cov-report=term-missing
 ```
 
-Builds synthetic spec-correct FLAC files and verifies tag reading, true-dimension
+Hermetic pytest suite (no network, no real files touched): synthetic spec-correct
+FLACs in temp dirs, mocked album-art HTTP, and FastAPI `TestClient` for every
+endpoint. Covers ~97% of the code, including tag reading, true-dimension
 detection (ignoring lying stored fields), status classification, JPEG
-re-encoding, and the write round-trip.
+re-encoding, the atomic write round-trip, and the full API surface.
 
 ## Project layout
 
@@ -170,9 +173,11 @@ scanner.py           Fast FLAC metadata/cover parser + library scan
 art_sources.py       iTunes / Deezer / Cover Art Archive lookups
 patcher.py           JPEG re-encode + embed cover (mutagen)
 static/              index.html, app.js, style.css  (the UI)
-tests/               self-contained core tests
-Dockerfile           container image
+tests/               pytest suite (scanner / patcher / art_sources / server)
+Dockerfile           container image (python:3.13-slim-trixie)
 docker-compose.yml   one-command run + CIFS share mount
+requirements.txt     runtime deps (pinned)
+requirements-dev.txt test/coverage deps
 .env.example         template for SMB settings (copy to .env)
 ```
 

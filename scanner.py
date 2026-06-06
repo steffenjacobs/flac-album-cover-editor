@@ -23,18 +23,24 @@ import os
 import struct
 import warnings
 from collections import Counter
+from collections.abc import Callable
 from io import BytesIO
 
 from PIL import Image
 
-# Album art can legitimately be large; we only read headers, so disable the
-# decompression-bomb guard to avoid spurious errors/warnings.
-Image.MAX_IMAGE_PIXELS = None
+# Bound decoded pixels so a crafted image can't exhaust memory, while leaving
+# ample headroom for legitimate album art (16k x 16k).
+MAX_IMAGE_PIXELS = 256_000_000
+Image.MAX_IMAGE_PIXELS = MAX_IMAGE_PIXELS
 warnings.simplefilter("ignore", Image.DecompressionBombWarning)
 
 # Block types (RFC 9639 sec 8.1)
 BLOCK_VORBIS_COMMENT = 4
 BLOCK_PICTURE = 6
+
+# PICTURE content types (RFC 9639 Table 13)
+PICTURE_TYPE_FRONT_COVER = 3
+PICTURE_TYPE_ICONS = (1, 2)  # 32x32 file icon / other file icon
 
 # How many bytes of picture data to read before giving up and reading it all.
 # JPEG SOF / PNG IHDR almost always live within the first few KB.
@@ -43,7 +49,7 @@ HEADER_PROBE = 128 * 1024
 PROBLEM_STATUSES = {"missing", "too_small", "unknown", "error"}
 
 
-def _img_dims(buf: bytes):
+def _img_dims(buf: bytes) -> tuple[int | None, int | None]:
     """Return (width, height) from image header bytes, or (None, None)."""
     try:
         im = Image.open(BytesIO(buf))
@@ -55,14 +61,14 @@ def _img_dims(buf: bytes):
     return None, None
 
 
-def _parse_vorbis_comment(block: bytes):
+def _parse_vorbis_comment(block: bytes) -> dict[str, list[str]]:
     """Parse a FLAC VORBIS_COMMENT block body. NOTE: vorbis comment integer
     lengths are LITTLE-endian (unlike the rest of FLAC metadata)."""
     tags: dict[str, list[str]] = {}
     try:
         bio = BytesIO(block)
         (vendor_len,) = struct.unpack("<I", bio.read(4))
-        bio.seek(vendor_len, os.SEEK_CUR)  # skip vendor string
+        bio.seek(vendor_len, os.SEEK_CUR)
         (count,) = struct.unpack("<I", bio.read(4))
         for _ in range(count):
             (clen,) = struct.unpack("<I", bio.read(4))
@@ -75,7 +81,7 @@ def _parse_vorbis_comment(block: bytes):
     return tags
 
 
-def _read_picture_block(f, length: int):
+def _read_picture_block(f, length: int) -> dict:
     """Read a PICTURE block (all big-endian). `f` is positioned at the start of
     the block body; returns a dict and leaves the file position anywhere inside
     the block (caller seeks to the block end)."""
@@ -109,21 +115,21 @@ def _read_picture_block(f, length: int):
     }
 
 
-def _select_front(pictures: list[dict]):
+def _select_front(pictures: list[dict]) -> dict | None:
     """Pick the front cover: prefer picture type 3, else the first non-icon
     picture (some taggers store the cover as type 0 'Other')."""
     if not pictures:
         return None
     for p in pictures:
-        if p["type"] == 3:
+        if p["type"] == PICTURE_TYPE_FRONT_COVER:
             return p
     for p in pictures:
-        if p["type"] not in (1, 2):  # not file icons
+        if p["type"] not in PICTURE_TYPE_ICONS:
             return p
     return pictures[0]
 
 
-def read_flac_fast(path: str):
+def read_flac_fast(path: str) -> dict:
     """Fast path: parse only the metadata we need."""
     with open(path, "rb") as f:
         head = f.read(10)
@@ -176,7 +182,7 @@ def read_flac_fast(path: str):
     }
 
 
-def read_flac_mutagen(path: str):
+def read_flac_mutagen(path: str) -> dict:
     """Robust fallback using mutagen (reads the whole picture, slower)."""
     from mutagen.flac import FLAC
 
@@ -212,7 +218,7 @@ def read_flac_mutagen(path: str):
     }
 
 
-def read_flac(path: str):
+def read_flac(path: str) -> dict:
     try:
         return read_flac_fast(path)
     except Exception:
@@ -223,7 +229,7 @@ def read_flac(path: str):
                     "front": None, "error": str(exc)}
 
 
-def read_front_cover_bytes(path: str):
+def read_front_cover_bytes(path: str) -> tuple[bytes | None, str | None]:
     """Return (data, mime) of the front cover for displaying a thumbnail, or
     (None, None). Uses mutagen because we need the full image bytes here."""
     try:
@@ -232,7 +238,10 @@ def read_front_cover_bytes(path: str):
         audio = FLAC(path)
         if not audio.pictures:
             return None, None
-        front = next((p for p in audio.pictures if p.type == 3), audio.pictures[0])
+        front = next(
+            (p for p in audio.pictures if p.type == PICTURE_TYPE_FRONT_COVER),
+            audio.pictures[0],
+        )
         if not front.data or front.mime == "-->":
             return None, None
         return bytes(front.data), (front.mime or "image/jpeg")
@@ -240,7 +249,7 @@ def read_front_cover_bytes(path: str):
         return None, None
 
 
-def status_for(front: dict | None, min_size: int):
+def status_for(front: dict | None, min_size: int) -> tuple[str, int | None, int | None]:
     """Classify a file's front cover."""
     if front is None:
         return "missing", None, None
@@ -259,14 +268,16 @@ def status_for(front: dict | None, min_size: int):
     return "ok", w, h
 
 
-def _majority(values):
+def _majority(values) -> str | None:
     vals = [v for v in values if v]
     if not vals:
         return None
     return Counter(vals).most_common(1)[0][0]
 
 
-def scan_library(root: str, min_size: int, progress=None):
+def scan_library(
+    root: str, min_size: int, progress: Callable[..., None] | None = None
+) -> list[dict]:
     """Walk `root`, group FLAC files by their containing folder, and return a
     list of album dicts for every folder that has at least one file with a
     missing or too-small front cover."""
@@ -283,7 +294,7 @@ def scan_library(root: str, min_size: int, progress=None):
     folders: dict[str, list[dict]] = {}
     for i, path in enumerate(flac_paths, 1):
         info = read_flac(path)
-        if "error" in info and info.get("front") is None and info.get("album") is None:
+        if info.get("error"):
             status, w, h = "error", None, None
         else:
             status, w, h = status_for(info.get("front"), min_size)

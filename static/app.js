@@ -11,6 +11,9 @@ const api = async (url, opts) => {
   return r.json();
 };
 
+const STATUS_LABEL = { missing: "missing", too_small: "too small", unknown: "unknown", error: "error", ok: "ok" };
+const STATUS_CLASS = { missing: "bad", too_small: "warn", unknown: "bad", error: "bad", ok: "ok" };
+
 const els = {
   root: $("#musicRoot"),
   minSize: $("#minSize"),
@@ -116,24 +119,20 @@ function renderAlbum(album) {
   $(".album-artist", node).textContent = album.artist || "(unknown artist)";
   $(".album-folder", node).textContent = album.folder;
 
-  // current cover thumbnail
   const img = $(".thumb .current", node);
   const noart = $(".thumb .noart", node);
   if (album.has_cover) {
     img.src = `/api/albums/${album.id}/current-cover`;
     img.onload = () => { img.style.display = "block"; noart.style.display = "none"; };
-    img.onerror = () => { img.style.display = "none"; };
+    img.onerror = () => { img.style.display = "none"; noart.style.display = "block"; };
   }
 
-  // badges
   const badges = $(".badges", node);
   const counts = statusCounts(album.files);
-  const label = { missing: "missing", too_small: "too small", unknown: "unknown", error: "error", ok: "ok" };
-  const cls = { missing: "bad", too_small: "warn", unknown: "bad", error: "bad", ok: "ok" };
   Object.entries(counts).forEach(([st, n]) => {
     const b = document.createElement("span");
-    b.className = "badge " + (cls[st] || "");
-    b.textContent = `${n} ${label[st] || st}`;
+    b.className = "badge " + (STATUS_CLASS[st] || "");
+    b.textContent = `${n} ${STATUS_LABEL[st] || st}`;
     badges.appendChild(b);
   });
   const toggle = document.createElement("span");
@@ -142,17 +141,15 @@ function renderAlbum(album) {
   toggle.onclick = () => $(".files", node).classList.toggle("hidden");
   badges.appendChild(toggle);
 
-  // file list
   const filesEl = $(".files", node);
   album.files.forEach((f) => {
     const row = document.createElement("div");
     row.className = "file-row";
     const dim = f.w && f.h ? `${f.w}×${f.h}` : "";
-    row.innerHTML = `<span>${escapeHtml(f.name)}</span><span class="st st-${f.status}">${(label[f.status] || f.status)} ${dim}</span>`;
+    row.innerHTML = `<span>${escapeHtml(f.name)}</span><span class="st st-${f.status}">${(STATUS_LABEL[f.status] || f.status)} ${dim}</span>`;
     filesEl.appendChild(row);
   });
 
-  // actions
   const findBtn = $(".find", node);
   const customBtn = $(".custom", node);
   const uploadBtn = $(".upload", node);
@@ -251,7 +248,6 @@ function renderAlbum(album) {
 
   findBtn.onclick = () => loadCandidates(false);
 
-  // custom free-text search
   customBtn.onclick = () => {
     customBox.classList.toggle("hidden");
     if (!customBox.classList.contains("hidden")) {
@@ -270,7 +266,6 @@ function renderAlbum(album) {
     if (e.key === "Enter") { e.preventDefault(); runCustom(); }
   });
 
-  // upload your own cover image
   uploadBtn.onclick = () => uploadInput.click();
   uploadInput.onchange = async () => {
     const f = uploadInput.files[0];
@@ -314,7 +309,6 @@ function renderAlbum(album) {
         resultEl.classList.add("success");
         resultEl.textContent = `✓ Patched ${okCount}/${res.results.length} tracks with a ${res.cover.w}×${res.cover.h} JPEG (${Math.round(res.cover.bytes / 1024)} KB, q${res.cover.quality}).`;
         root.classList.add("done");
-        // refresh the thumbnail
         img.src = `/api/candidate/${selectedToken}?t=` + Date.now();
         img.style.display = "block";
         noart.style.display = "none";

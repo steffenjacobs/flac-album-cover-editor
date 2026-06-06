@@ -8,23 +8,28 @@ own logged-in Windows session so it inherits access to the SMB share.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import threading
 import traceback
 import uuid
+from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
 from pathlib import Path
 
 import requests
 from fastapi import Body, FastAPI, File, HTTPException, UploadFile
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
 
 from art_sources import gather_candidate_urls
-from patcher import reencode_jpeg, write_cover
+from patcher import MAX_IMAGE_PIXELS, reencode_jpeg, write_cover
 from scanner import read_front_cover_bytes, scan_library
+
+log = logging.getLogger(__name__)
 
 BASE = Path(__file__).resolve().parent
 STATIC_DIR = BASE / "static"
@@ -33,8 +38,22 @@ CONFIG_PATH = BASE / "config.json"
 DEFAULTS = {"music_root": r"\\192.168.1.147\Music\Music HQ", "min_size": 800}
 UA = "FlacCoverTool/1.0 (personal album-art tagging tool)"
 
+FETCH_WORKERS = 8                 # concurrent candidate downloads
+MAX_CANDIDATES_PER_PAGE = 15      # candidates fetched per "find (more)" page
+MAX_CANDIDATE_PAGE = 5            # safety cap on "find more" paging
+MAX_UPLOAD_BYTES = 30 * 1024 * 1024
+CACHE_MAX_ENTRIES = 256           # bound the in-memory candidate cache
+
+# Hosts accepted in the Host header (blocks DNS-rebinding against this localhost
+# service). Override with the ALLOWED_HOSTS env var (comma-separated).
+ALLOWED_HOSTS = [
+    h.strip()
+    for h in os.environ.get("ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")
+    if h.strip()
+]
+
 # ---------------------------------------------------------------- config
-def load_config():
+def load_config() -> dict:
     cfg = dict(DEFAULTS)
     if CONFIG_PATH.exists():
         try:
@@ -53,11 +72,11 @@ def load_config():
     return cfg
 
 
-def save_config(cfg):
+def save_config(cfg: dict) -> None:
     try:
         CONFIG_PATH.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
-    except Exception:
-        pass
+    except OSError as exc:
+        log.warning("could not save config: %s", exc)
 
 
 CONFIG = load_config()
@@ -65,10 +84,39 @@ CONFIG = load_config()
 # ---------------------------------------------------------------- state
 SCAN = {"state": "idle", "scanned": 0, "total": 0, "error": None, "message": ""}
 SCAN_LOCK = threading.Lock()
-ALBUMS: dict[str, dict] = {}          # album id -> album dict
-CACHE: dict[str, dict] = {}           # candidate token -> {data, mime, w, h}
+ALBUMS: dict[str, dict] = {}                      # album id -> album dict
+CACHE: "OrderedDict[str, dict]" = OrderedDict()  # token -> {data, mime, w, h}
+
+
+def _meets(w: int, h: int) -> bool:
+    return w >= CONFIG["min_size"] and h >= CONFIG["min_size"]
+
+
+def _cache_put(data: bytes, mime: str, w: int, h: int) -> str:
+    """Store an image in the bounded cache and return its token."""
+    token = uuid.uuid4().hex
+    CACHE[token] = {"data": data, "mime": mime, "w": w, "h": h}
+    while len(CACHE) > CACHE_MAX_ENTRIES:
+        CACHE.popitem(last=False)  # evict least-recently inserted
+    return token
+
+
+def _candidate_payload(token: str, source: str, title, artist,
+                       w: int, h: int) -> dict:
+    return {
+        "token": token,
+        "source": source,
+        "title": title,
+        "artist": artist,
+        "width": w,
+        "height": h,
+        "url": f"/api/candidate/{token}",
+        "meets": _meets(w, h),
+    }
+
 
 app = FastAPI(title="FLAC Album Cover Editor")
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=ALLOWED_HOSTS)
 
 
 # ---------------------------------------------------------------- scan
@@ -99,7 +147,7 @@ def _run_scan(root: str, min_size: int):
             SCAN["message"] = str(exc)
 
 
-def _album_summary(a: dict):
+def _album_summary(a: dict) -> dict:
     return {
         "id": a["id"],
         "folder": a["folder"],
@@ -162,36 +210,22 @@ def current_cover(aid: str):
     return Response(content=data, media_type=mime or "image/jpeg")
 
 
-def _fetch_candidate(c: dict):
+def _fetch_candidate(c: dict) -> dict | None:
     try:
         resp = requests.get(c["url"], headers={"User-Agent": UA}, timeout=15)
         if resp.status_code != 200 or not resp.content:
             return None
         data = resp.content
-        im = Image.open(BytesIO(data))
-        w, h = im.size
-        token = uuid.uuid4().hex
-        CACHE[token] = {
-            "data": data,
-            "mime": resp.headers.get("Content-Type", "image/jpeg"),
-            "w": w,
-            "h": h,
-        }
-        return {
-            "token": token,
-            "source": c["source"],
-            "title": c.get("title"),
-            "artist": c.get("artist"),
-            "width": w,
-            "height": h,
-            "url": f"/api/candidate/{token}",
-            "meets": (w >= CONFIG["min_size"] and h >= CONFIG["min_size"]),
-        }
-    except Exception:
+        w, h = Image.open(BytesIO(data)).size
+        if w * h > MAX_IMAGE_PIXELS:
+            log.warning("candidate too large (%dx%d): %s", w, h, c["url"])
+            return None
+        token = _cache_put(data, resp.headers.get("Content-Type", "image/jpeg"), w, h)
+        return _candidate_payload(token, c["source"], c.get("title"),
+                                  c.get("artist"), w, h)
+    except Exception as exc:
+        log.warning("candidate fetch failed for %s: %s", c.get("url"), exc)
         return None
-
-
-MAX_CANDIDATE_PAGE = 5  # safety cap on "find more" paging
 
 
 @app.get("/api/albums/{aid}/candidates")
@@ -217,8 +251,8 @@ def candidates(aid: str, more: bool = False, q: str | None = None):
                            "album": a.get("album")}
     page = a["cand_page"]
     seen = a.setdefault("seen_urls", set())
-    act = a.get("active") or {"query": a["query"], "artist": a.get("artist"),
-                              "album": a.get("album")}
+    act = a.setdefault("active", {"query": a["query"], "artist": a.get("artist"),
+                                  "album": a.get("album")})
 
     urls = gather_candidate_urls(
         act["query"], act["artist"], act["album"], UA, page=page
@@ -231,8 +265,8 @@ def candidates(aid: str, more: bool = False, q: str | None = None):
         fresh.append(c)
 
     results = []
-    with ThreadPoolExecutor(max_workers=8) as ex:
-        for r in ex.map(_fetch_candidate, fresh[:15]):
+    with ThreadPoolExecutor(max_workers=FETCH_WORKERS) as ex:
+        for r in ex.map(_fetch_candidate, fresh[:MAX_CANDIDATES_PER_PAGE]):
             if r:
                 results.append(r)
     # Candidates meeting the size bar first, then largest first.
@@ -247,15 +281,12 @@ def candidates(aid: str, more: bool = False, q: str | None = None):
 def candidate_image(token: str):
     c = CACHE.get(token)
     if not c:
-        raise HTTPException(404, "candidate expired")
+        raise HTTPException(404, "candidate not found")
     return Response(content=c["data"], media_type=c["mime"])
 
 
-MAX_UPLOAD_BYTES = 30 * 1024 * 1024
-
-
 @app.post("/api/upload")
-async def upload_cover(file: UploadFile = File(...)):
+async def upload_cover(file: UploadFile = File(...)) -> dict:
     """Accept a user-supplied image, validate it, and stash it in the candidate
     cache so it can be selected and patched like any fetched candidate."""
     data = await file.read()
@@ -264,33 +295,19 @@ async def upload_cover(file: UploadFile = File(...)):
     if len(data) > MAX_UPLOAD_BYTES:
         raise HTTPException(400, "Image too large (max 30 MB)")
     try:
-        im = Image.open(BytesIO(data))
-        w, h = im.size
+        w, h = Image.open(BytesIO(data)).size
     except Exception:
         raise HTTPException(400, "That file is not a readable image")
+    if w * h > MAX_IMAGE_PIXELS:
+        raise HTTPException(400, "Image dimensions too large")
 
-    token = uuid.uuid4().hex
-    CACHE[token] = {
-        "data": data,
-        "mime": file.content_type or "image/jpeg",
-        "w": w,
-        "h": h,
-    }
-    return {
-        "token": token,
-        "source": "Upload",
-        "title": file.filename,
-        "artist": None,
-        "width": w,
-        "height": h,
-        "url": f"/api/candidate/{token}",
-        "meets": (w >= CONFIG["min_size"] and h >= CONFIG["min_size"]),
-    }
+    token = _cache_put(data, file.content_type or "image/jpeg", w, h)
+    return _candidate_payload(token, "Upload", file.filename, None, w, h)
 
 
 # ---------------------------------------------------------------- patch
 @app.post("/api/albums/{aid}/patch")
-def patch(aid: str, payload: dict = Body(...)):
+def patch(aid: str, payload: dict = Body(...)) -> dict:
     a = ALBUMS.get(aid)
     if not a:
         raise HTTPException(404, "unknown album")
@@ -300,7 +317,7 @@ def patch(aid: str, payload: dict = Body(...)):
     if not c:
         raise HTTPException(400, "Candidate image not found -- re-fetch covers")
 
-    jpeg = reencode_jpeg(c["data"], max_dim=1200, quality=88)
+    jpeg = reencode_jpeg(c["data"])
     results = []
     for f in a["files"]:
         try:
@@ -350,6 +367,7 @@ app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="ui")
 if __name__ == "__main__":
     import uvicorn
 
+    logging.basicConfig(level=logging.INFO)
     host = os.environ.get("HOST", "127.0.0.1")
     port = int(os.environ.get("PORT", "8765"))
     print(f"FLAC Album Cover Editor  ->  http://{host}:{port}")
