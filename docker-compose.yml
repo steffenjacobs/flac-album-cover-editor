@@ -12,6 +12,7 @@ services:
       # The CIFS volume is mounted at /music; scan this subfolder of it.
       MUSIC_ROOT: "/music/${MUSIC_SUBDIR}"
       MIN_SIZE: "${MIN_SIZE:-800}"
+      SCAN_WORKERS: "${SCAN_WORKERS:-8}"
     volumes:
       - music:/music
     restart: unless-stopped

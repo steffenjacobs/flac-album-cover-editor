@@ -56,13 +56,42 @@ def test_uri_picture_treated_as_missing(tmp_path):
 
 
 def test_large_non_image_picture_reads_remaining_bytes(tmp_path):
-    # >HEADER_PROBE bytes of non-image data: probe fails, the rest is read,
+    # Bigger than the last probe stage: every stage fails, the full read fires,
     # still undecodable -> real dims None -> 'unknown'.
-    blob = b"\x00" * (scanner.HEADER_PROBE + 2000)
+    blob = b"\x00" * (scanner.HEADER_PROBE_STAGES[-1] + 2000)
     p = write_flac(tmp_path / "garbage.flac", "G", "A", blob)
     info = scanner.read_flac_fast(p)
     assert info["front"]["real_w"] is None
     assert scanner.status_for(info["front"], 800)[0] == "unknown"
+
+
+def test_staged_probe_escalates_to_find_dims(tmp_path):
+    # A JPEG whose SOF sits past the first 16KB stage (large COM marker): the
+    # first stage can't decode it, the second stage does.
+    from io import BytesIO
+    from PIL import Image
+    out = BytesIO()
+    pad = scanner.HEADER_PROBE_STAGES[0] + 8000  # push SOF beyond stage 1
+    Image.new("RGB", (1000, 1000), (10, 20, 30)).save(
+        out, format="JPEG", comment=b"x" * pad)
+    p = write_flac(tmp_path / "bighdr.flac", "B", "A", out.getvalue())
+    info = scanner.read_flac_fast(p)
+    assert (info["front"]["real_w"], info["front"]["real_h"]) == (1000, 1000)
+
+
+def test_scan_workers_deterministic(tmp_path, monkeypatch):
+    for i in range(6):
+        d = tmp_path / f"Album{i}"; d.mkdir()
+        write_flac(d / "1.flac", f"Album{i}", "Artist", make_jpeg(300, 300))
+        write_flac(d / "2.flac", f"Album{i}", "Artist", make_jpeg(1000, 1000))
+
+    def run(workers):
+        monkeypatch.setenv("SCAN_WORKERS", str(workers))
+        albums = scanner.scan_library(str(tmp_path), 800)
+        return [(a["folder"], a["n_problem"],
+                 [(f["path"], f["status"]) for f in a["files"]]) for a in albums]
+
+    assert run(1) == run(4)  # parallel result identical to serial
 
 
 def test_status_for_branches():

@@ -98,8 +98,8 @@ On later runs you only need steps 5–6.
 The default music folder is `\\192.168.1.147\Music\Music HQ` (editable in the
 UI). Run it from your own logged-in Windows session so it inherits your access to
 the SMB share — don't run it as a Windows service (SMB sessions are per-logon).
-You can override the defaults with the `MUSIC_ROOT`, `MIN_SIZE`, `HOST`, and
-`PORT` environment variables, e.g.:
+You can override the defaults with the `MUSIC_ROOT`, `MIN_SIZE`, `HOST`, `PORT`,
+and `SCAN_WORKERS` environment variables, e.g.:
 
 ```powershell
 $env:MUSIC_ROOT = "D:\Music"; .venv\Scripts\python.exe server.py
@@ -145,6 +145,12 @@ $env:MUSIC_ROOT = "D:\Music"; .venv\Scripts\python.exe server.py
 also change them in the UI; they persist between runs. The `MUSIC_ROOT` and
 `MIN_SIZE` environment variables take precedence over `config.json` (this is how
 the Docker setup pins the in-container mount path).
+
+**Scan speed:** files are read concurrently to hide per-file SMB round-trip
+latency (the scan is latency-bound, not CPU-bound). `SCAN_WORKERS` sets the
+number of parallel readers (default 8). On a fast wired LAN you can raise it
+(e.g. 16–24) for a further speedup; on Wi-Fi/VPN or a signed SMB share, keep or
+lower it. The result is identical regardless of the value.
 
 ## Restoring originals
 

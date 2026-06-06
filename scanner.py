@@ -24,6 +24,7 @@ import struct
 import warnings
 from collections import Counter
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from io import BytesIO
 
 from PIL import Image
@@ -42,11 +43,23 @@ BLOCK_PICTURE = 6
 PICTURE_TYPE_FRONT_COVER = 3
 PICTURE_TYPE_ICONS = (1, 2)  # 32x32 file icon / other file icon
 
-# How many bytes of picture data to read before giving up and reading it all.
-# JPEG SOF / PNG IHDR almost always live within the first few KB.
-HEADER_PROBE = 128 * 1024
+# Cover dimensions live in the image header (JPEG SOF / PNG IHDR), almost always
+# within the first few KB. Read the cover in growing stages so the common case
+# transfers ~16 KB over SMB instead of 128 KB, escalating only when needed.
+HEADER_PROBE_STAGES = (16 * 1024, 256 * 1024)
+
+# Per-file reads serialize over SMB latency, so scan files concurrently. Threads
+# (not processes) suit this blocking, GIL-releasing network I/O. Tune via env.
+DEFAULT_SCAN_WORKERS = 8
 
 PROBLEM_STATUSES = {"missing", "too_small", "unknown", "error"}
+
+
+def _scan_workers() -> int:
+    try:
+        return max(1, int(os.environ.get("SCAN_WORKERS", DEFAULT_SCAN_WORKERS)))
+    except ValueError:
+        return DEFAULT_SCAN_WORKERS
 
 
 def _img_dims(buf: bytes) -> tuple[int | None, int | None]:
@@ -96,12 +109,18 @@ def _read_picture_block(f, length: int) -> dict:
     is_uri = mime == "-->"
     real_w = real_h = None
     if not is_uri and datalen > 0:
-        probe_n = min(datalen, HEADER_PROBE)
-        probe = f.read(probe_n)
-        real_w, real_h = _img_dims(probe)
-        if real_w is None and probe_n < datalen:
-            rest = f.read(datalen - probe_n)
-            real_w, real_h = _img_dims(probe + rest)
+        buf = b""
+        for stage in HEADER_PROBE_STAGES:
+            target = min(datalen, stage)
+            if target > len(buf):
+                buf += f.read(target - len(buf))
+            real_w, real_h = _img_dims(buf)
+            if real_w is not None or len(buf) >= datalen:
+                break
+        else:
+            if len(buf) < datalen:  # last resort: read the whole picture
+                buf += f.read(datalen - len(buf))
+                real_w, real_h = _img_dims(buf)
 
     return {
         "type": ptype,
@@ -131,7 +150,7 @@ def _select_front(pictures: list[dict]) -> dict | None:
 
 def read_flac_fast(path: str) -> dict:
     """Fast path: parse only the metadata we need."""
-    with open(path, "rb") as f:
+    with open(path, "rb", buffering=64 * 1024) as f:
         head = f.read(10)
         start = 0
         if head[:3] == b"ID3":  # rare ID3 tag prepended before fLaC
@@ -275,6 +294,25 @@ def _majority(values) -> str | None:
     return Counter(vals).most_common(1)[0][0]
 
 
+def _scan_one(path: str, min_size: int) -> dict:
+    """Read and classify a single file (pure: safe to run on a worker thread)."""
+    info = read_flac(path)
+    if info.get("error"):
+        status, w, h = "error", None, None
+    else:
+        status, w, h = status_for(info.get("front"), min_size)
+    return {
+        "path": path,
+        "album": info.get("album"),
+        "artist": info.get("artist"),
+        "albumartist": info.get("albumartist"),
+        "front": info.get("front"),
+        "status": status,
+        "w": w,
+        "h": h,
+    }
+
+
 def scan_library(
     root: str, min_size: int, progress: Callable[..., None] | None = None
 ) -> list[dict]:
@@ -292,27 +330,30 @@ def scan_library(
         progress(0, total, f"Found {total} FLAC files")
 
     folders: dict[str, list[dict]] = {}
-    for i, path in enumerate(flac_paths, 1):
-        info = read_flac(path)
-        if info.get("error"):
-            status, w, h = "error", None, None
-        else:
-            status, w, h = status_for(info.get("front"), min_size)
-        rec = {
-            "path": path,
-            "album": info.get("album"),
-            "artist": info.get("artist"),
-            "albumartist": info.get("albumartist"),
-            "front": info.get("front"),
-            "status": status,
-            "w": w,
-            "h": h,
-        }
-        folders.setdefault(os.path.dirname(path), []).append(rec)
-        if progress and (i % 25 == 0 or i == total):
-            progress(i, total)
+    workers = max(1, min(_scan_workers(), total))
+    done = 0
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        futures = {ex.submit(_scan_one, p, min_size): p for p in flac_paths}
+        for fut in as_completed(futures):
+            try:
+                rec = fut.result()
+            except Exception:  # read_flac normally swallows; stay defensive
+                p = futures[fut]
+                rec = {"path": p, "album": None, "artist": None,
+                       "albumartist": None, "front": None,
+                       "status": "error", "w": None, "h": None}
+            folders.setdefault(os.path.dirname(rec["path"]), []).append(rec)
+            done += 1
+            if progress and (done % 25 == 0 or done == total):
+                progress(done, total)
     if progress:
         progress(total, total)
+
+    # Sort each folder's files so cover_file selection and the displayed file
+    # list are deterministic regardless of completion order (SCAN_WORKERS=1
+    # then reproduces the old sequential output exactly).
+    for files in folders.values():
+        files.sort(key=lambda f: f["path"])
 
     albums = []
     for folder, files in sorted(folders.items()):
