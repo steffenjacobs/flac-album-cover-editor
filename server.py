@@ -186,23 +186,33 @@ MAX_CANDIDATE_PAGE = 5  # safety cap on "find more" paging
 
 
 @app.get("/api/albums/{aid}/candidates")
-def candidates(aid: str, more: bool = False):
+def candidates(aid: str, more: bool = False, q: str | None = None):
     a = ALBUMS.get(aid)
     if not a:
         raise HTTPException(404, "unknown album")
 
     # `more=False` starts fresh (page 0, clears the seen set); `more=True`
     # advances to the next page and only returns URLs not already shown.
+    # `q` is an optional free-text override; when given it replaces the
+    # tag-derived query (artist/album are dropped so the raw term is searched).
+    # The active search context is remembered so `more=True` keeps paging it.
     if more:
         a["cand_page"] = a.get("cand_page", 0) + 1
     else:
         a["cand_page"] = 0
         a["seen_urls"] = set()
+        if q and q.strip():
+            a["active"] = {"query": q.strip(), "artist": None, "album": None}
+        else:
+            a["active"] = {"query": a["query"], "artist": a.get("artist"),
+                           "album": a.get("album")}
     page = a["cand_page"]
     seen = a.setdefault("seen_urls", set())
+    act = a.get("active") or {"query": a["query"], "artist": a.get("artist"),
+                              "album": a.get("album")}
 
     urls = gather_candidate_urls(
-        a["query"], a.get("artist"), a.get("album"), UA, page=page
+        act["query"], act["artist"], act["album"], UA, page=page
     )
     fresh = []
     for c in urls:
@@ -220,7 +230,7 @@ def candidates(aid: str, more: bool = False):
     results.sort(key=lambda r: (not r["meets"], -(r["width"] * r["height"])))
 
     has_more = bool(results) and page < MAX_CANDIDATE_PAGE
-    return {"candidates": results, "query": a["query"], "page": page,
+    return {"candidates": results, "query": act["query"], "page": page,
             "has_more": has_more}
 
 

@@ -154,9 +154,13 @@ function renderAlbum(album) {
 
   // actions
   const findBtn = $(".find", node);
+  const customBtn = $(".custom", node);
   const patchBtn = $(".patch", node);
   const candEl = $(".candidates", node);
   const resultEl = $(".result", node);
+  const customBox = $(".custom-search", node);
+  const customInput = $(".custom-input", node);
+  const customGo = $(".custom-go", node);
   let selectedToken = null;
   let moreBtn = null;
 
@@ -198,19 +202,24 @@ function renderAlbum(album) {
     }
   }
 
-  async function loadCandidates(more) {
+  async function loadCandidates(more, customQ) {
     findBtn.disabled = true;
     if (moreBtn) {
       moreBtn.disabled = true;
       if (more) moreBtn.textContent = "Searching…";
     }
     if (!more) {
-      candEl.innerHTML = `<div class="spinner">Searching iTunes, Deezer & Cover Art Archive…</div>`;
+      const what = customQ ? `“${escapeHtml(customQ)}”` : "iTunes, Deezer & Cover Art Archive";
+      candEl.innerHTML = `<div class="spinner">Searching ${what}…</div>`;
       selectedToken = null;
       patchBtn.disabled = true;
     }
     try {
-      const data = await api(`/api/albums/${album.id}/candidates${more ? "?more=1" : ""}`);
+      const params = [];
+      if (more) params.push("more=1");
+      if (!more && customQ) params.push("q=" + encodeURIComponent(customQ));
+      const qs = params.length ? "?" + params.join("&") : "";
+      const data = await api(`/api/albums/${album.id}/candidates${qs}`);
       if (!more) {
         candEl.innerHTML = "";
         findBtn.textContent = "Search again";
@@ -238,6 +247,25 @@ function renderAlbum(album) {
   }
 
   findBtn.onclick = () => loadCandidates(false);
+
+  // custom free-text search
+  customBtn.onclick = () => {
+    customBox.classList.toggle("hidden");
+    if (!customBox.classList.contains("hidden")) {
+      if (!customInput.value) customInput.value = album.query || "";
+      customInput.focus();
+      customInput.select();
+    }
+  };
+  function runCustom() {
+    const q = customInput.value.trim();
+    if (!q) return;
+    loadCandidates(false, q);
+  }
+  customGo.onclick = runCustom;
+  customInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); runCustom(); }
+  });
 
   patchBtn.onclick = async () => {
     if (!selectedToken) return;

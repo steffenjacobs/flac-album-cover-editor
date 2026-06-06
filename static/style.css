@@ -127,6 +127,10 @@ main { padding: 20px 24px 60px; display: flex; flex-direction: column; gap: 16px
 .st-too_small { color: var(--warn); }
 .st-ok { color: var(--ok); }
 
+.custom-search { display: flex; gap: 8px; padding: 0 16px 14px; }
+.custom-search.hidden { display: none; }
+.custom-search .custom-input { flex: 1; max-width: 480px; }
+
 .candidates { display: flex; gap: 12px; flex-wrap: wrap; padding: 0 16px; }
 .candidates:not(:empty) { padding-bottom: 16px; }
 .cand {
