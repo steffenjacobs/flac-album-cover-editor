@@ -11,6 +11,9 @@ venv/
 *.bak
 *.flacbak
 
+# Local Docker env with SMB credentials (copy .env.example -> .env)
+.env
+
 # OS / editor cruft
 Thumbs.db
 .DS_Store

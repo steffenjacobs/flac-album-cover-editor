@@ -41,6 +41,15 @@ def load_config():
             cfg.update(json.loads(CONFIG_PATH.read_text(encoding="utf-8")))
         except Exception:
             pass
+    # Environment variables win over config.json (used by the Docker setup so
+    # the in-container mount path is always authoritative).
+    if os.environ.get("MUSIC_ROOT"):
+        cfg["music_root"] = os.environ["MUSIC_ROOT"]
+    if os.environ.get("MIN_SIZE"):
+        try:
+            cfg["min_size"] = int(os.environ["MIN_SIZE"])
+        except ValueError:
+            pass
     return cfg
 
 
@@ -304,5 +313,7 @@ app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="ui")
 if __name__ == "__main__":
     import uvicorn
 
-    print("FLAC Album Cover Editor  ->  http://127.0.0.1:8765")
-    uvicorn.run(app, host="127.0.0.1", port=8765)
+    host = os.environ.get("HOST", "127.0.0.1")
+    port = int(os.environ.get("PORT", "8765"))
+    print(f"FLAC Album Cover Editor  ->  http://{host}:{port}")
+    uvicorn.run(app, host=host, port=port)

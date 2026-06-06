@@ -56,7 +56,12 @@ def write_cover(path: str, jpeg: dict, backup: bool = True):
     if backup:
         bak = path + ".bak"
         if not os.path.exists(bak):
-            shutil.copy2(path, bak)
+            try:
+                shutil.copy2(path, bak)  # preserves mtime when possible
+            except OSError:
+                # CIFS/SMB mounts can reject metadata copy (utime/chmod);
+                # fall back to a plain content copy so the backup still happens.
+                shutil.copyfile(path, bak)
 
     audio = FLAC(path)
     audio.clear_pictures()  # avoid duplicate covers

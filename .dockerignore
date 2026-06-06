@@ -1,0 +1,15 @@
+.git/
+.gitignore
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.bak
+*.flacbak
+# Local runtime config (the container is configured via env vars instead)
+config.json
+.env
+.env.example
+# Docs/tests aren't needed in the runtime image
+README.md
+tests/

@@ -34,6 +34,47 @@ py -3 -m venv .venv
 
 Then open <http://127.0.0.1:8765>.
 
+## Run with Docker
+
+The app runs in a container; the SMB share is mounted into it via a CIFS volume
+declared in `docker-compose.yml` (Docker's Linux engine performs the mount, so a
+Linux container can reach a Windows/NAS share — this works under Docker Desktop
+on Windows too).
+
+1. Copy the env template and fill in your share details/credentials:
+
+   ```powershell
+   copy .env.example .env
+   ```
+
+   `.env` (defaults already match `\\192.168.1.147\Music\Music HQ`):
+
+   ```ini
+   SMB_HOST=192.168.1.147
+   SMB_SHARE=Music         # the share; mounted at /music in the container
+   MUSIC_SUBDIR=Music HQ   # subfolder of the share to scan
+   SMB_USER=guest          # or your username
+   SMB_PASSWORD=           # password (no commas); empty for guest
+   SMB_VERS=3.0            # try 2.1 / 1.0 if the mount fails
+   MIN_SIZE=800
+   ```
+
+2. Bring it up:
+
+   ```powershell
+   docker compose up --build
+   ```
+
+3. Open <http://127.0.0.1:8765>. The "Music folder" is pre-set to the mounted
+   share, so just click **Scan library**.
+
+The UI port is published to `127.0.0.1` only (same local-only posture as the
+native run). To point at a plain local folder instead of SMB, replace the
+`music` volume with a bind mount (`volumes: ["/path/to/music:/music"]`) and set
+`MUSIC_SUBDIR=` empty.
+
+> `.env` holds credentials and is git-ignored — never commit it.
+
 ## Using it
 
 1. Set the **Music folder** (defaults to `\\192.168.1.147\Music\Music HQ`) and
@@ -89,13 +130,16 @@ re-encoding, and the write round-trip.
 ## Project layout
 
 ```
-server.py        FastAPI app: API + serves the UI
-scanner.py       Fast FLAC metadata/cover parser + library scan
-art_sources.py   iTunes / Deezer / Cover Art Archive lookups
-patcher.py       JPEG re-encode + embed cover (mutagen)
-static/          index.html, app.js, style.css  (the UI)
-tests/           self-contained core tests
-start.bat        Windows launcher (venv + run)
+server.py            FastAPI app: API + serves the UI
+scanner.py           Fast FLAC metadata/cover parser + library scan
+art_sources.py       iTunes / Deezer / Cover Art Archive lookups
+patcher.py           JPEG re-encode + embed cover (mutagen)
+static/              index.html, app.js, style.css  (the UI)
+tests/               self-contained core tests
+start.bat            Windows launcher (venv + run)
+Dockerfile           container image
+docker-compose.yml   one-command run + CIFS share mount
+.env.example         template for SMB settings (copy to .env)
 ```
 
 ## Notes / limits
@@ -107,3 +151,13 @@ start.bat        Windows launcher (venv + run)
   is consistent.
 - The album-art APIs are free for personal tagging; they don't grant rights to
   redistribute the images.
+
+## License
+
+This project's own code is released under the [MIT License](LICENSE).
+
+Third-party runtime dependencies keep their own licenses: FastAPI/uvicorn/
+requests (MIT/BSD) and Pillow (HPND) are permissive, but **mutagen is GPLv2+**.
+Using it locally is unrestricted; if you redistribute a built artifact that
+bundles mutagen (e.g. the Docker image), the usual GPL obligations apply to that
+bundled copy (its source is freely available on PyPI/GitHub).

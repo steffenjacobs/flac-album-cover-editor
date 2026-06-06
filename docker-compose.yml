@@ -1,0 +1,27 @@
+services:
+  flac-cover-editor:
+    build: .
+    image: flac-album-cover-editor
+    container_name: flac-album-cover-editor
+    # Published to localhost only — same "local tool" security posture as before.
+    ports:
+      - "127.0.0.1:8765:8765"
+    environment:
+      HOST: "0.0.0.0"
+      PORT: "8765"
+      # The CIFS volume is mounted at /music; scan this subfolder of it.
+      MUSIC_ROOT: "/music/${MUSIC_SUBDIR}"
+      MIN_SIZE: "${MIN_SIZE:-800}"
+    volumes:
+      - music:/music
+    restart: unless-stopped
+
+volumes:
+  # Mounts the SMB/CIFS share into the container. Docker (its Linux engine)
+  # performs the mount, so no extra packages are needed in the image.
+  music:
+    driver: local
+    driver_opts:
+      type: cifs
+      device: "//${SMB_HOST}/${SMB_SHARE}"
+      o: "username=${SMB_USER},password=${SMB_PASSWORD},vers=${SMB_VERS:-3.0},file_mode=0664,dir_mode=0775,nounix,iocharset=utf8"
