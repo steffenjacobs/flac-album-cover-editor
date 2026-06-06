@@ -10,6 +10,10 @@ lets you give each folder a cover — from the album-art APIs, a custom search
 term, or an image you upload yourself — which it embeds as a JPEG front cover
 into **every track in that folder**.
 
+![Screenshot of the FLAC Album Cover Editor showing flagged folders with
+candidate covers from iTunes/Deezer/Cover Art Archive, custom search, upload, and
+patch controls](screenshot.jpg)
+
 ## Why it's a "local web app" (not just a web page)
 
 A browser cannot read your filesystem or a network share — it's sandboxed. So
